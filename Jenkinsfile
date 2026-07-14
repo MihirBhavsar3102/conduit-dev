@@ -22,6 +22,8 @@ pipeline {
     stages {
         stage('Checkout Code') {
             steps {
+                // Completely purges stale host tracking folders before pulling new files
+                deleteDir()
                 checkout scm
             }
         }
@@ -30,6 +32,8 @@ pipeline {
             agent { 
                 docker { 
                     image 'node:20-alpine' 
+                    // Forces container execution as root to bypass folder access locks
+                    args '-u root'
                 } 
             }
             steps {
@@ -44,6 +48,8 @@ pipeline {
             agent { 
                 docker { 
                     image 'node:20-alpine' 
+                    // Forces container execution as root to bypass folder access locks
+                    args '-u root'
                 } 
             }
             steps {
