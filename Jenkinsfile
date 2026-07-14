@@ -60,9 +60,11 @@ pipeline {
 
         stage('Build Local Image & Archive') {
             steps {
-                echo "Building local application runtime context..."
-                sh "docker build -t ${IMAGE_NAME}:latest ."
-                
+                echo "Building local application runtime context from subdirectory..."
+                // Tells docker to look inside the 'backend' folder for the Dockerfile
+                sh "docker build -t ${IMAGE_NAME}:latest ./backend"
+                sh "docker build -t ${IMAGE_NAME}:latest ./frontend"
+
                 echo "Compressing Docker image into a tar archive..."
                 sh "docker save ${IMAGE_NAME}:latest -o ${TAR_FILE}"
             }
