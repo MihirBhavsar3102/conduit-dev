@@ -27,7 +27,11 @@ pipeline {
         }
 
         stage('Code Linting & Security') {
-            agent { image 'node:20-alpine' }
+            agent { 
+                docker { 
+                    image 'node:20-alpine' 
+                } 
+            }
             steps {
                 echo 'Installing packages and running linting rules...'
                 sh 'npm ci'
@@ -37,7 +41,11 @@ pipeline {
         }
 
         stage('Run Unit Tests') {
-            agent { image 'node:20-alpine' }
+            agent { 
+                docker { 
+                    image 'node:20-alpine' 
+                } 
+            }
             steps {
                 echo 'Executing NodeJS test suite...'
                 sh 'npm test || echo "No production unit tests defined yet."'
@@ -50,17 +58,14 @@ pipeline {
                 sh "docker build -t ${IMAGE_NAME}:latest ."
                 
                 echo "Compressing Docker image into a tar archive..."
-                // Compresses the built image into a physical file on the Jenkins worker node
                 sh "docker save ${IMAGE_NAME}:latest -o ${TAR_FILE}"
             }
         }
 
         stage('Deploy to AWS EC2 via SCP') {
             steps {
-                // Securely injects the AWS EC2 SSH key into the runtime agent session
                 sshagent(credentials: ["${SSH_CREDS_ID}"]) {
                     echo "1. Transferring ${TAR_FILE} directly to EC2 host: ${EC2_PUBLIC_IP}..."
-                    // Uses Secure Copy Protocol to securely push the file over SSH port 22
                     sh "scp -o StrictHostKeyChecking=no ${TAR_FILE} ${EC2_USER}@${EC2_PUBLIC_IP}:/tmp/${TAR_FILE}"
                     
                     echo "2. Executing remote rollout script on EC2..."
@@ -95,7 +100,6 @@ pipeline {
     post {
         always {
             echo 'Clearing builder node workspace disk storage allocations...'
-            // Deletes the workspace code and the heavy .tar file from the Jenkins agent disk
             cleanWs()
             sh 'docker image prune -f || true'
         }
