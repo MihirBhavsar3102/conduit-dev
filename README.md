@@ -16,7 +16,7 @@ These instructions will help you install and run the project on your local machi
 
 ### Prerequisites
 
-Before you run the project, make sure that you have the following tools and software installed on your computer:
+Testing pipeline: Before you run the project, make sure that you have the following tools and software installed on your computer:
 
 - Text editor/IDE (e.g., VS Code, Sublime Text, Atom)
 - [Git](https://git-scm.com/downloads)
