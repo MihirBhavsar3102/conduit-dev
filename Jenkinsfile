@@ -28,21 +28,23 @@ pipeline {
             }
         }
 
-        stage('Code Linting & Security') {
-            agent { 
-                docker { 
-                    image 'node:20-alpine' 
-                    // Forces container execution as root to bypass folder access locks
-                    args '-u 1000:1000'
-                } 
-            }
-            steps {
-                echo 'Installing packages and running linting rules...'
-                sh 'npm ci'
-                sh 'npm run lint || echo "Lint script missing or bypassed."'
-                sh 'npm audit --audit-level=high || echo "Vulnerabilities found, check audit log"'
-            }
+stage('Code Linting & Security') {
+    agent {
+        docker {
+            image 'node:20-alpine'
+            // Dynamically passes the current Jenkins user and group IDs into the container
+            args "-u \$(id -u):\$(id -g) --entrypoint="
         }
+    }
+    steps {
+        echo 'Installing packages and running linting rules...'
+        // Clear local npm cache before installing to prevent permission locks
+        sh 'npm cache clean --force'
+        sh 'npm ci'
+        sh 'npm run lint || echo "Lint script missing or bypassed."'
+        sh 'npm audit --audit-level=high || echo "Vulnerabilities found, check audit log"'
+    }
+}
 
         stage('Run Unit Tests') {
             agent { 
