@@ -28,37 +28,36 @@ pipeline {
             }
         }
 
-stage('Code Linting & Security') {
+	stage('Code Linting & Security') {
     agent {
         docker {
             image 'node:20-alpine'
-            // Dynamically passes the current Jenkins user and group IDs into the container
-            args "-u \$(id -u):\$(id -g) --entrypoint="
+            // Creates a fresh, writable home directory inside the container for npm cache
+            args '-v /tmp:/tmp -e HOME=/tmp'
         }
     }
     steps {
         echo 'Installing packages and running linting rules...'
-        // Clear local npm cache before installing to prevent permission locks
-        sh 'npm cache clean --force'
         sh 'npm ci'
         sh 'npm run lint || echo "Lint script missing or bypassed."'
         sh 'npm audit --audit-level=high || echo "Vulnerabilities found, check audit log"'
     }
 }
 
-        stage('Run Unit Tests') {
-            agent { 
-                docker { 
-                    image 'node:20-alpine' 
-                    // Forces container execution as root to bypass folder access locks
-                    args '-u root'
-                } 
-            }
-            steps {
-                echo 'Executing NodeJS test suite...'
-                sh 'npm test || echo "No production unit tests defined yet."'
-            }
+stage('Run Unit Tests') {
+    agent {
+        docker {
+            image 'node:20-alpine'
+            // Creates a fresh, writable home directory inside the container for npm cache
+            args '-v /tmp:/tmp -e HOME=/tmp'
         }
+    }
+    steps {
+        echo 'Executing NodeJS test suite...'
+        sh 'npm test || echo "No production unit tests defined yet."'
+    }
+}
+	
 
         stage('Build Local Image & Archive') {
             steps {
