@@ -33,7 +33,7 @@ pipeline {
                 docker { 
                     image 'node:20-alpine' 
                     // Forces container execution as root to bypass folder access locks
-                    args '-u root'
+                    args '-u 1000:1000'
                 } 
             }
             steps {
@@ -62,11 +62,10 @@ pipeline {
             steps {
                 echo "Building local application runtime context from subdirectory..."
                 // Tells docker to look inside the 'backend' folder for the Dockerfile
-                sh "sudo docker build -t ${IMAGE_NAME}:latest ./backend"
-                sh "sudo docker build -t ${IMAGE_NAME}:latest ./frontend"
-
+		sh "docker build -t ${IMAGE_NAME}-backend:latest ./backend"
+		sh "docker build -t ${IMAGE_NAME}-frontend:latest ./frontend"
                 echo "Compressing Docker image into a tar archive..."
-                sh "sudo docker save ${IMAGE_NAME}:latest -o ${TAR_FILE}"
+		sh "docker save ${IMAGE_NAME}-backend:latest ${IMAGE_NAME}-frontend:latest -o ${TAR_FILE}"
             }
         }
 
