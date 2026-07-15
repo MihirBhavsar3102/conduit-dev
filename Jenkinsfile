@@ -70,40 +70,39 @@ stage('Run Unit Tests') {
             }
         }
 
-        stage('Deploy to AWS EC2 via SCP') {
-            steps {
-                sshagent(credentials: ["${SSH_CREDS_ID}"]) {
-                    echo "1. Transferring ${TAR_FILE} directly to EC2 host: ${EC2_PUBLIC_IP}..."
-                    sh "scp -o StrictHostKeyChecking=no ${TAR_FILE} ${EC2_USER}@${EC2_PUBLIC_IP}:/tmp/${TAR_FILE}"
-                    
-                    echo "2. Executing remote rollout script on EC2..."
-                    sh """
-                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_PUBLIC_IP} '
-                            echo "-> Loading the new Docker image archive..."
-                            docker load -i /tmp/${TAR_FILE}
-                            
-                            echo "-> Terminating stale operational containers..."
-                            docker stop conduit-app || true
-                            docker rm conduit-app || true
-                            
-                            echo "-> Launching the updated Express server instance..."
-                            docker run -d \
-                                --name conduit-app \
-                                --restart always \
-                                -p ${APP_PORT}:${APP_PORT} \
-                                ${IMAGE_NAME}:latest
-                                
-                            echo "-> Cleaning up deployment files on EC2 host..."
-                            rm -f /tmp/${TAR_FILE}
-                            docker image prune -f
-                            
-                            echo "Deployment successfully executed!"
-                        '
-                    """
-                }
-            }
+stage('Deploy to AWS EC2 via SCP') {
+    steps {
+        sshagent(credentials: ["${SSH_CREDS_ID}"]) {
+            echo "1. Transferring ${TAR_FILE} directly to EC2 host: ${EC2_PUBLIC_IP}..."
+            sh "scp -o StrictHostKeyChecking=no ${TAR_FILE} ${EC2_USER}@${EC2_PUBLIC_IP}:/tmp/${TAR_FILE}"
+
+            echo "2. Executing remote rollout script on EC2..."
+            sh """
+                ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_PUBLIC_IP} '
+                    echo "-> Loading the new Docker image archive..."
+                    sudo docker load -i /tmp/${TAR_FILE}
+
+                    echo "-> Terminating stale operational containers..."
+                    sudo docker stop conduit-app || true
+                    sudo docker rm conduit-app || true
+
+                    echo "-> Launching the updated Express server instance..."
+                    sudo docker run -d \
+                        --name conduit-app \
+                        --restart always \
+                        -p ${APP_PORT}:${APP_PORT} \
+                        ${IMAGE_NAME}:latest
+
+                    echo "-> Cleaning up deployment files on EC2 host..."
+                    rm -f /tmp/${TAR_FILE}
+                    sudo docker image prune -f
+
+                    echo "Deployment successfully executed!"
+                '
+            """
         }
     }
+}
 
     post {
         always {
