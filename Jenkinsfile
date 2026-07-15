@@ -117,10 +117,37 @@ pipeline {
                 // Jenkins runs directly on the EC2 host here (agent any, no docker{}),
                 // so localhost + the host-mapped compose ports is correct.
                 sh '''
-                    echo "-> Verifying services respond..."
-                    sleep 5
-                    curl -fsS -o /dev/null http://localhost:3002/api/tags && echo "Backend OK" || (echo "Backend health check FAILED" && exit 1)
-                    curl -fsS -o /dev/null http://localhost:3000 && echo "Frontend OK" || (echo "Frontend health check FAILED" && exit 1)
+                    check_url() {
+                        url="$1"; name="$2"
+                        for i in $(seq 1 12); do
+                            if curl -fsS -o /dev/null "$url"; then
+                                echo "$name OK"
+                                return 0
+                            fi
+                            echo "  ...$name not ready yet (attempt $i/12), retrying in 5s"
+                            sleep 5
+                        done
+                        echo "$name health check FAILED after 60s"
+                        return 1
+                    }
+
+                    BACKEND_OK=1
+                    FRONTEND_OK=1
+                    check_url "http://localhost:3002/api/tags" "Backend"  || BACKEND_OK=0
+                    check_url "http://localhost:3000"          "Frontend" || FRONTEND_OK=0
+
+                    if [ "$BACKEND_OK" = "0" ] || [ "$FRONTEND_OK" = "0" ]; then
+                        echo "---- docker compose ps ----"
+                        docker compose ps
+                        echo "---- backend logs (last 80 lines) ----"
+                        docker compose logs --tail=80 backend
+                        echo "---- frontend logs (last 40 lines) ----"
+                        docker compose logs --tail=40 frontend
+                        echo "---- postgres logs (last 40 lines) ----"
+                        docker compose logs --tail=40 postgres_db
+                        exit 1
+                    fi
+
                     echo "-> App reachable externally at: ${APP_URL}"
                 '''
             }
