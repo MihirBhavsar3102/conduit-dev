@@ -11,7 +11,7 @@ pipeline {
         
         // AWS Deployment Targets (Replace with your actual EC2 details)
         EC2_USER         = 'ubuntu' 
-        EC2_PUBLIC_IP    = '65.2.56.224' 
+        EC2_PUBLIC_IP    = '13.204.224.105' 
         APP_PORT         = '3000' 
     }
 
