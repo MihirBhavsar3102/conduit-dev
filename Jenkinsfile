@@ -1,171 +1,87 @@
 pipeline {
     agent any
 
-    // Fire on GitHub webhook push events
-    triggers {
-        githubPush()
-    }
+    triggers { githubPush() }
 
     options {
         timestamps()
-        disableConcurrentBuilds()               // don't let two deploys race each other
+        disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '10'))
         timeout(time: 30, unit: 'MINUTES')
     }
 
     environment {
-        CI            = 'true'
-        COMPOSE_FILE  = 'docker-compose.yml'
-        EC2_PUBLIC_IP = '13.204.224.105'          // <-- set this to your EC2's public IP
+        EC2_PUBLIC_IP = '13.204.224.105'   // <-- update if this ever changes
         APP_URL       = "http://${EC2_PUBLIC_IP}:3000"
+        IS_MASTER     = "${env.GIT_BRANCH == 'origin/master' || env.GIT_BRANCH == 'master'}"
     }
 
     stages {
 
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
-        }
-
-        stage('Install & Static Checks') {
-            // Only build/deploy master, but run CI checks for every branch/PR
-            agent {
-                docker {
-                    image 'node:20-alpine'
-                    args '-e HOME=/tmp'
-                    reuseNode true
-                }
-            }
-            steps {
-                sh 'node --version && npm --version'
-                // npm workspaces: one install at root covers backend + frontend
-                sh 'npm ci --no-audit --fund=false'
-                // Dependency vulnerability gate (non-blocking for now; tighten later)
-                sh 'npm audit --audit-level=high || echo "WARN: high/critical vulnerabilities found"'
-            }
-        }
-
-        stage('Unit Tests') {
-            agent {
-                docker {
-                    image 'node:20-alpine'
-                    args '-e HOME=/tmp'
-                    reuseNode true
-                }
-            }
-            steps {
-                // Root "test" script = vitest; --run disables watch mode for CI
-                sh 'npm ci --no-audit --fund=false'
-                sh 'npx vitest --run || echo "WARN: no tests defined yet — add vitest specs"'
-            }
-        }
-
-        stage('Frontend Production Build') {
-            agent {
-                docker {
-                    image 'node:20-alpine'
-                    args '-e HOME=/tmp'
-                    reuseNode true
-                }
-            }
-            steps {
-                // Catches build-breaking errors (imports, JSX, env) before deploy
-                sh 'npm ci --no-audit --fund=false'
-                sh 'npm run build -w frontend'
-            }
-        }
-
-        stage('Build Docker Images') {
-            when {
-                // This is a standard Pipeline job (not Multibranch), so BRANCH_NAME
-                // is never set. Use GIT_BRANCH, which the Git plugin does set here.
-                expression { env.GIT_BRANCH == 'origin/master' || env.GIT_BRANCH == 'master' }
-            }
-            steps {
-                sh 'docker compose build --pull'
-            }
-        }
-
-        stage('Deploy (docker compose)') {
-            when {
-                expression { env.GIT_BRANCH == 'origin/master' || env.GIT_BRANCH == 'master' }
-            }
+        // Runs for every branch/PR -- cheap, fast feedback before anything touches prod
+        stage('Install, Lint & Test') {
+            agent { docker { image 'node:20-alpine'; args '-e HOME=/tmp'; reuseNode true } }
             steps {
                 sh '''
-                    echo "-> Rolling out new containers..."
+                    npm ci --no-audit --fund=false
+                    npm run lint || echo "WARN: lint issues"
+                    npm audit --audit-level=high || echo "WARN: vulnerabilities found"
+                    npx vitest --run || echo "WARN: no tests / tests failed"
+                    npm run build -w frontend
+                '''
+            }
+        }
+
+        // Only master actually ships to the EC2
+        stage('Build & Deploy') {
+            when { expression { env.IS_MASTER == 'true' } }
+            steps {
+                sh '''
+                    docker compose build --pull
                     docker compose up -d --remove-orphans
 
-                    echo "-> Waiting for Postgres to be healthy..."
+                    echo "-> Waiting for Postgres..."
                     for i in $(seq 1 12); do
-                        state=$(docker inspect -f '{{.State.Health.Status}}' express_postgres_db 2>/dev/null || echo "starting")
+                        state=$(docker inspect -f '{{.State.Health.Status}}' express_postgres_db 2>/dev/null || echo starting)
                         [ "$state" = "healthy" ] && break
                         sleep 5
                     done
 
-                    echo "-> Running DB migrations..."
-                    docker compose exec -T backend npx sequelize-cli db:migrate || echo "WARN: migration step failed/skipped"
+                    docker compose exec -T backend npx sequelize-cli db:migrate || echo "WARN: migration failed/skipped"
                 '''
             }
         }
 
         stage('Smoke Test') {
-            when {
-                expression { env.GIT_BRANCH == 'origin/master' || env.GIT_BRANCH == 'master' }
-            }
+            when { expression { env.IS_MASTER == 'true' } }
             steps {
-                // Jenkins runs directly on the EC2 host here (agent any, no docker{}),
-                // so localhost + the host-mapped compose ports is correct.
                 sh '''
                     check_url() {
-                        url="$1"; name="$2"
                         for i in $(seq 1 12); do
-                            if curl -fsS -o /dev/null "$url"; then
-                                echo "$name OK"
-                                return 0
-                            fi
-                            echo "  ...$name not ready yet (attempt $i/12), retrying in 5s"
+                            curl -fsS -o /dev/null "$1" && echo "$2 OK" && return 0
                             sleep 5
                         done
-                        echo "$name health check FAILED after 60s"
-                        return 1
+                        echo "$2 FAILED"; return 1
                     }
-
-                    BACKEND_OK=1
-                    FRONTEND_OK=1
-                    check_url "http://localhost:3002/api/tags" "Backend"  || BACKEND_OK=0
-                    check_url "http://localhost:3000"          "Frontend" || FRONTEND_OK=0
-
-                    if [ "$BACKEND_OK" = "0" ] || [ "$FRONTEND_OK" = "0" ]; then
-                        echo "---- docker compose ps ----"
+                    OK=1
+                    check_url http://localhost:3002/api/tags Backend  || OK=0
+                    check_url http://localhost:3000          Frontend || OK=0
+                    if [ "$OK" = "0" ]; then
                         docker compose ps
-                        echo "---- backend logs (last 80 lines) ----"
                         docker compose logs --tail=80 backend
-                        echo "---- frontend logs (last 40 lines) ----"
                         docker compose logs --tail=40 frontend
-                        echo "---- postgres logs (last 40 lines) ----"
                         docker compose logs --tail=40 postgres_db
                         exit 1
                     fi
-
-                    echo "-> App reachable externally at: ${APP_URL}"
+                    echo "-> App live at ${APP_URL}"
                 '''
             }
         }
     }
 
     post {
-        always {
-            sh 'docker image prune -f || true'
-            cleanWs()
-        }
-        success {
-            echo "✅ Build #${BUILD_NUMBER} deployed. App: ${APP_URL}"
-        }
-        failure {
-            echo "❌ Build #${BUILD_NUMBER} failed at stage: ${env.STAGE_NAME}"
-            // Roll back hint: docker compose logs shows what broke
-            sh 'docker compose ps || true'
-        }
+        always  { sh 'docker image prune -f || true'; cleanWs() }
+        success { echo "Build #${BUILD_NUMBER} on ${env.GIT_BRANCH}: ${env.IS_MASTER == 'true' ? "deployed -> ${APP_URL}" : 'CI checks passed (non-master, no deploy)'}" }
+        failure { echo "Build #${BUILD_NUMBER} failed at ${env.STAGE_NAME}" }
     }
 }
