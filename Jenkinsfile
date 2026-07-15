@@ -14,10 +14,10 @@ pipeline {
     }
 
     environment {
-        CI           = 'true'
-        COMPOSE_FILE = 'docker-compose.yml'
-        APP_URL      = 'http://localhost:3000'  // Vite frontend
-        API_URL      = 'http://localhost:3002'  // Express backend (host port from compose)
+        CI            = 'true'
+        COMPOSE_FILE  = 'docker-compose.yml'
+        EC2_PUBLIC_IP = '13.204.224.105'          // <-- set this to your EC2's public IP
+        APP_URL       = "http://${EC2_PUBLIC_IP}:3000"
     }
 
     stages {
@@ -77,14 +77,20 @@ pipeline {
         }
 
         stage('Build Docker Images') {
-            when { branch 'master' }
+            when {
+                // This is a standard Pipeline job (not Multibranch), so BRANCH_NAME
+                // is never set. Use GIT_BRANCH, which the Git plugin does set here.
+                expression { env.GIT_BRANCH == 'origin/master' || env.GIT_BRANCH == 'master' }
+            }
             steps {
                 sh 'docker compose build --pull'
             }
         }
 
         stage('Deploy (docker compose)') {
-            when { branch 'master' }
+            when {
+                expression { env.GIT_BRANCH == 'origin/master' || env.GIT_BRANCH == 'master' }
+            }
             steps {
                 sh '''
                     echo "-> Rolling out new containers..."
@@ -104,13 +110,18 @@ pipeline {
         }
 
         stage('Smoke Test') {
-            when { branch 'master' }
+            when {
+                expression { env.GIT_BRANCH == 'origin/master' || env.GIT_BRANCH == 'master' }
+            }
             steps {
+                // Jenkins runs directly on the EC2 host here (agent any, no docker{}),
+                // so localhost + the host-mapped compose ports is correct.
                 sh '''
                     echo "-> Verifying services respond..."
                     sleep 5
-                    curl -fsS -o /dev/null ${API_URL}/api/tags && echo "Backend OK" || (echo "Backend health check FAILED" && exit 1)
-                    curl -fsS -o /dev/null ${APP_URL} && echo "Frontend OK" || (echo "Frontend health check FAILED" && exit 1)
+                    curl -fsS -o /dev/null http://localhost:3002/api/tags && echo "Backend OK" || (echo "Backend health check FAILED" && exit 1)
+                    curl -fsS -o /dev/null http://localhost:3000 && echo "Frontend OK" || (echo "Frontend health check FAILED" && exit 1)
+                    echo "-> App reachable externally at: ${APP_URL}"
                 '''
             }
         }
